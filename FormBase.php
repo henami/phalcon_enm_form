@@ -39,6 +39,15 @@ Form base class for Phalcon Web Framework
 - rename "render_block" to "renderDecorated"
 - convert array() and Array() to []
 
+2.2 2021.11.05 H.Enami
+
+- use Bootstrap5 ( change some class name )
+- add getDefaultDecorators() and setDefaultDecorators()
+- add variables for required element rendering
+- delete 'create="1"' from <form> tag : create is needed only for form class not for rendering
+- add Application\Forms\Element\multiSelect Element
+- add Application\Forms\Element\buttonGroup Element
+
 */
 
 
@@ -49,14 +58,14 @@ use Phalcon\Filter\FilterFactory;
 
 class FormBase extends Form
 {
-    protected $_version  = "2.1";
+    protected $_version  = "2.2";
     protected $separator = PHP_EOL;
     protected $indent    = "    "; // space x 4
 
-    protected $confirm   = false;
+    protected $_confirm   = false;
 
     /* default classes for form elements */
-    protected $_default_element_class = 'form-control col-sm-6 mr-1';
+    protected $_default_element_class = 'form-control col-sm-7 mr-1';
     /* default classes for form elements label */
     protected $_default_label_class   = 'col-form-label col-sm-2';
     /* default decorators for normal input */
@@ -69,14 +78,17 @@ class FormBase extends Form
         "enctype"      => "application/x-www-form-urlencoded", #"multipart/form-data",
         "method"       => 'post',
     ];
-    protected $_default_required_style = 'color:red;font-size:xx-small';
+    #protected $_default_required_style = 'color:red;font-size:xx-small';
+    protected $_default_required_style = 'color:red;';
+    protected $_default_required_string = '*';
 
 
     /* properties */ 
     protected $form_params;
     protected $required_style;
+    protected $required_string;
 
-    public function __construct ($entity = null, $userOptions = array())
+    public function __construct ($entity = null, $userOptions = [])
     {
         parent::__construct($entity, $userOptions);
     }
@@ -99,7 +111,7 @@ class FormBase extends Form
         }
 
         // Form properties from config files
-        $this->form_params = $this->config->form->toArray() ?? [];
+        $this->form_params = $this->config->form ? $this->config->form->toArray() : [];
 
         $output = '';
 
@@ -113,6 +125,7 @@ class FormBase extends Form
         if ($formOptions['method'] !== 'post') {
             unset($formOptions['enctype']);
         }
+        unset($formOptions['create']); // "create" is not for <form> tag.
         $output .= $this->tag->form($formOptions);
         $output .= $separator . $separator;
 
@@ -135,6 +148,7 @@ class FormBase extends Form
     {
         $elm        = is_object($element) ? $element : $this->get($element);
         $decorators = $this->getDecorators($element);
+
         $content    = '';
         foreach($decorators as $decorator) {
             if ( is_array($decorator) ) {
@@ -179,6 +193,27 @@ class FormBase extends Form
         return $element->getUserOption($decorator_name, $this->_default_decorator);
 
     }
+    public function getDefaultDecorators($decoratorName = "decorators"){
+        if ($decoratorName == 'decorators_confirm') {
+            return $this->_default_confirm_decorator;
+        }
+
+        return $this->_default_decorator;
+    }
+    public function setDefaultDecorators($decoratorName, array $decorators) {
+        if ($decoratorName == 'decorators') {
+            $this->_default_decorator = $decorators;
+            return;
+        }
+        if ($decoratorName == 'decorators_confirm') {
+            $this->_default_confirm_decorator = $decorators;
+            return;
+        }
+
+        throw new Exception('The decorator name should be "decorators" or "decorators_confirm".');
+
+    }
+
     private function _concatenate($output, $content, $placement = 'APPEND')
     {
         $separator = $this->separator;
@@ -211,124 +246,152 @@ class FormBase extends Form
                 }
                 break;
         }
-        $output_required = '';
         if ($element->getAttribute('required',false) or $element->getUserOption('required',false) ) {
-            if (! $this->required_style) {
-                $this->required_style = $this->_default_required_style;
-            }
-            $output_required = '<span style="' . $this->required_style .'">*</span>';
-            $element->setLabel($element->getLabel() . $output_required);
+            $element->setLabel(
+                $this->_buildRequired(
+                    $element->getLabel()
+                )
+            );
         }
         $output    = $element->label($output_attr);
         $placement = array_key_exists('placement', $options) ? $options['placement'] : 'APPEND';
         return $this->_concatenate($output, $content, $placement);
     }
+    private function _buildRequired($label = '')
+    {
+        $output_required = '<span style="' . $this->getRequiredStyle() .'">' . $this->getRequiredString() . '</span>';
+        return $this->_concatenate($output_required, $label, "APPEND");
+
+    }
     private function _buildInput($element, $options = array(), $content = '')
     {
-        $output_attr = $element->getAttributes();
-        $raw_value = array_key_exists('raw_value', $options) ? TRUE : FALSE;
-        // for Select field for special purpose(radio or multi checked check box and so)
-        $is_radio    = $element->getUserOption('is_radio',    FALSE);
-        $is_checkbox = $element->getUserOption('is_checkbox', FALSE);
-
-        if (is_array($element->getUserOption('multi_values'))){
-            $theValue = implode(',',$element->getUserOption('multi_values',array()));
-        } else {
-            $theValue = $element->getValue();
+        // Create form element for normal input
+        if (!$this->getConfirm()) {
+            $output = $this->_buildInputNormal($element, $options, $content);
+            $placement = array_key_exists('placement', $options) ? $options['placement'] : 'APPEND';
+            return $this->_concatenate($output, $content, $placement);
         }
-        #$filtered =  (new Phalcon\Filter())->sanitize($theValue, 'string');
-        $factory = new FilterFactory();
-        $locator = $factory->newInstance();
-        $filtered =  $locator->sanitize($theValue, "string");
 
-
-        if ($raw_value) {
-            $output    = $filtered;
-        } else {
-            if (!$this->confirm) {
-                $is_radio    = $element->getUserOption('is_radio',    FALSE);
-                $is_checkbox = $element->getUserOption('is_checkbox', FALSE);
-                if (get_class($element) == 'Phalcon\Forms\Element\Select') {
-                    if ($is_radio) {
-                        // render as radio button
-                        $output = $this->_renderAsRadio($element,$output_attr,$content);
-                    } elseif ($is_checkbox) {
-                        // render as check box
-                        $output = $this->_renderAsCheckbox($element,$output_attr,$content);
-                    } else {
-                        // render as select box
-                        $output  = $element->render($output_attr);
-                    }
-                } else {
-                    $output  = $element->render($output_attr);
-                }
-            } else {
-                switch ( get_class($element)) {
-                case 'Phalcon\Forms\Element\Hidden' :
-                case 'Phalcon\Forms\Element\Submit' :
-                    $output  = $element->render($output_attr);
-                    break;
-                case 'Phalcon\Forms\Element\Password' :
-                    $output  = '<span class="form-control-static">' . '********' . '</span>';
-                    $output .= ' <input type="hidden" name="' . $element->getName() . '" value="' . $filtered . '"/>';
-                    break;
-                case 'Phalcon\Forms\Element\TextArea' :
-                    #$output  = nl2br($element->getValue());
-                    $output  = '<span class="form-control-static">' . nl2br($filtered) . '</span>';
-                    $output .= ' <input type="hidden" name="' . $element->getName() . '" value="' . $filtered . '"/>';
-                    break;
-                case 'Phalcon\Forms\Element\Select' :
-                    #$output  = '<span class="form-control-static">' . $filtered . '</span>';
-                    $opts  = $element->getOptions();
-                    $opts_class = is_array($opts) ? 'array' : get_class($opts);
-                    if ($opts_class == "Phalcon\Mvc\Model\Resultset\Simple") {
-                        // if using tables
-                        $opts_using  = $element->getAttribute('using');
-                        $opts_tmp    = Array();
-                        foreach($opts as $r) {
-                            $key = $r->{$opts_using[0]};
-                            $val = $r->{$opts_using[1]};
-                            $opts_tmp[$key] = $val;
-                        }
-                        $opts = $opts_tmp;
-                    }
-                    $valueArray = explode(',', $filtered);
-                    $dispArray  = Array();
-                    foreach ($valueArray as $v) {
-                        #$dispArray[] = $opts[$v];
-                        if (strlen($v) != 0) {
-                            $dispArray[] = $opts[$v];
-                        }
-                    }
-                    $disp = implode(',', $dispArray);
-                    $output  = '<span class="form-control-static">' . $disp . '</span>';
-
-                    if (preg_match('/\[\]$/', $element->getName())) { 
-                        $hiddenName = preg_replace('/\[\]$/', '', $element->getName());
-                    } else {
-                        $hiddenName = $element->getName();
-                    }
-                    $output .= ' <input type="hidden" name="' . $hiddenName . '" value="' . $filtered . '"/>';
-                    break;
-                default:
-                    #$output  = $element->getValue();
-                    #$output  = '<p class="form-control-static">' . $filtered . '</p>';
-                    $output  = '<span class="form-control-static">' . $filtered . '</span>';
-                    if (preg_match('/\[\]$/', $element->getName())) { 
-                        $hiddenName = preg_replace('/\[\]$/', '', $element->getName());
-                    } else {
-                        $hiddenName = $element->getName();
-                    }
-                    #$output .= ' <input type="hidden" name="' . $element->getName() . '" value="' . $filtered . '"/>';
-                    $output .= ' <input type="hidden" name="' . $hiddenName . '" value="' . $filtered . '"/>';
-                    break;
-                }
-            }
-        }
+        // Create form element for "confirmation"
+        $output = $this->_buildInputConfirm($element, $options, $content);
         $placement = array_key_exists('placement', $options) ? $options['placement'] : 'APPEND';
         return $this->_concatenate($output, $content, $placement);
     }
 
+    private function _buildInputNormal($element, $options = array(), $content = '')
+    {
+        $attr = $element->getAttributes();
+        #$attr ??= [];
+        if (! isset($attr['class'])) {
+            $attr['class'] = $this->getDefaultElementClass();
+        }
+
+        $output  = $element->render($attr);
+
+        return $output;
+    }
+    private function _buildInputConfirm($element, $options = array(), $content = '')
+    {
+        $attr = $element->getAttributes();
+        if (! isset($attr['class'])) {
+            $attr['class'] = $this->getDefaultElementClass();
+        }
+
+        // Get minimal filtered value
+        $theValue = $element->getValue();
+        $factory  = new FilterFactory();
+        $locator  = $factory->newInstance();
+        $filtered = '';
+        if (gettype($theValue) == 'array') {
+            $filtered = implode(',', $theValue);
+        } else {
+            $filtered =  $locator->sanitize($theValue, "string");
+        }
+
+        // Get class name of the element
+        $elementClass = get_class($element);
+
+        if ($elementClass == 'Phalcon\Forms\Element\Hidden'){
+            // Same rendering as input
+            return $element->render($attr);
+        }
+
+        if ($elementClass == 'Phalcon\Forms\Element\Submit' ||
+            $elementClass == 'Application\Forms\Element\Button' ||
+            $elementClass == 'Application\Forms\Element\buttonGroup'){
+            // Same rendering as input
+            return $element->render($attr);
+        };
+
+        if ($elementClass == 'Phalcon\Forms\Element\TextArea'){
+            // Render LF/CR as <br/>
+            $output  = '<span>' . nl2br($filtered) . '</span>';
+            $output .= $this->tag->hiddenField([
+                $element->getName(),
+                'value' => $filtered,
+            ]);
+            return $output;
+        }
+ 
+        if ($elementClass == 'Application\Forms\Element\Check'){
+            $str = $filtered ? '1 (ON)' : '0 (OFF)';
+            $output  = '<span>' . $str  . '</span>';
+            $output .= $this->tag->hiddenField([
+                $element->getName(),
+                'value' => $filtered,
+            ]);
+            return $output;
+        }
+ 
+        if ($elementClass == 'Phalcon\Forms\Element\Password'){
+            $output  = '<span class="form-control-plaintext">' . '********' . '</span>';
+            $output .= $this->tag->hiddenField([
+                $element->getName(),
+                'value' => $filtered,
+            ]);
+            return $output;
+        }
+
+        if ($elementClass == 'Phalcon\Forms\Element\Select' ||
+            $elementClass == 'Application\Forms\Element\baseSelect' ||
+            $elementClass == 'Application\Forms\Element\multiSelect' ||
+            $elementClass == 'Application\Forms\Element\multiCheck' ||
+            $elementClass == 'Application\Forms\Element\Radio'){
+            $output = '';
+            $options  = $element->getOptions();
+
+            $valueArray = explode(',', $filtered);
+            $dispArray  = Array();
+            foreach ($valueArray as $v) {
+                if (strlen($v) != 0) {
+                    $dispArray[] = $options[$v];
+                }
+            }
+            $disp = implode(',', $dispArray);
+            $output  .= '<span>' . $disp . '</span>';
+
+            // Omit '[]' from end of element name
+            if (preg_match('/\[\]$/', $element->getName())) { 
+                $hiddenName = preg_replace('/\[\]$/', '', $element->getName());
+            } else {
+                $hiddenName = $element->getName();
+            }
+            $output .= $this->tag->hiddenField([
+                $hiddenName,
+                'value' => $filtered,
+            ]);
+            return $output;
+        }
+
+        // Rendering Text element and any other elements not listed above.
+        $output  = '<span>' . $filtered . '</span>';
+        $output .= $this->tag->hiddenField([
+            $element->getName(),
+            'value' => $filtered,
+        ]);
+
+        return $output;
+    }
 
     private function _wrapContent($element, $options = array(), $content = '')
     {
@@ -345,11 +408,9 @@ class FormBase extends Form
         $closetag  = '</' . $options['tag'] .'>';
         $separator = $this->separator;
         if ( array_key_exists('openOnly', $options) ) {
-            #return $this->_concatenate($opentag, $content, 'PREPEND');
             return $this->_concatenate($opentag, $content, $placement);
         }
         if ( array_key_exists('closeOnly', $options) ) {
-            #return $this->_concatenate($closetag, $content, 'APPEND');
             return $this->_concatenate($closetag, $content, $placement);
         }
 
@@ -377,24 +438,29 @@ class FormBase extends Form
     }
     private function _buildDefaultDecorator()
     {
+        # Note (for Bootstrap5)
+        # - .form-group class was obsoleted. So change to 'mb-3' 
+
         $default_label_class = $this->getDefaultLabelClass();
 
-        $this->_default_decorator = [
+        $this->_default_decorator = $this->_default_decorator ? $this->_default_decorator : [
             'ViewHelper',
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-7'))),
             'Errors',
             array('Label',  array('placement' => 'PREPEND', 'attributes' => array('class'=>$default_label_class))),
-            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'form-group row'))),
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'row mb-3'))),
         ];
-        $this->_default_confirm_decorator = [
+        $this->_default_confirm_decorator = $this->_default_confirm_decorator ? $this->_default_confirm_decorator :[
             'ViewHelper',
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-7'))),
             'Errors',
             array('Label',  array('placement' => 'PREPEND', 'attributes' => array('class'=>$default_label_class))),
-            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'form-group row'))),
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'row mb-3'))),
         ];
     }
     public function getConfirm()
     {
-        if ($this->confirm) {
+        if ($this->_confirm) {
             return TRUE;
         } else {
             return FALSE;
@@ -403,9 +469,9 @@ class FormBase extends Form
     public function setConfirm(bool $confirmMode = false)
     {
         if ($confirmMode) {
-            $this->confirm = TRUE;
+            $this->_confirm = TRUE;
         } else {
-            $this->confirm = FALSE;
+            $this->_confirm = FALSE;
         }
     }
     public function getRequiredStyle()
@@ -414,8 +480,18 @@ class FormBase extends Form
     }
     public function setRequiredStyle($style = null)
     {
-        if (! is_null($newClass)) {
+        if (! is_null($style)) {
             $this->required_style = $style;
+        }
+    }
+    public function getRequiredString()
+    {
+        return $this->required_string ?? $this->_default_required_string;
+    }
+    public function setRequiredString($string = null)
+    {
+        if (! is_null($string)) {
+            $this->required_string = $string;
         }
     }
     public function getDefaultElementClass()
@@ -438,88 +514,8 @@ class FormBase extends Form
             $this->_default_label_class = $newClass;
         }
     }
-    private function _renderAsRadio($element, $output_attr, $content = '')
-    {
-        // Render select box element as "Radio Button"
-        $opts = $element->getOptions();
-        $value = $element->getValue();
 
-        $elm_options = '';
-        foreach($output_attr as $k => $v) {
-            $elm_options .= "$k=\"$v\" ";
-        } 
-
-        foreach ($opts as $op_value => $op_lable) {
-            $content .= '<label>' . PHP_EOL;
-            $content .= '  <input type="radio" name="' . $element->getName() . '" value="' . $op_value . '"';
-            if ($op_value == $value) {
-                $content .= ' checked="checked" ';
-            }
-            $content .= $elm_options;
-            $content .= '>' . $op_lable; // . '<br />';
-            $content .= PHP_EOL . '</label>' . PHP_EOL;
-        }
-        return $content;
-    }
-    private function _renderAsCheckbox($element, $output_attr, $content = '')
-    {
-        // Render multiple select box element as multiple "Checkbox"
-        $opts  = $element->getOptions();
-        $opts_class = get_class($opts);
-        if ($opts_class == "Phalcon\Mvc\Model\Resultset\Simple") {
-            // if using tables
-            $opts_using  = $element->getAttribute('using');
-            $opts_tmp    = Array();
-            foreach($opts as $r) {
-                $key = $r->{$opts_using[0]};
-                $val = $r->{$opts_using[1]};
-                $opts_tmp[$key] = $val;
-            }
-            $opts = $opts_tmp;
-        }
-        #$value = $element->getValue();
-        $value = $element->getUserOption('multi_values', array());
-        if (! is_array($value)) {
-            $value = array($value);
-        }
-#var_dump($value);
-        $elm_options = '';
-        foreach($output_attr as $k => $v) {
-            // "class" is only applied ... 
-            if ( $k != 'class') {
-                continue;
-            }
-            if ( ! is_array($v) ) {
-                // -> ommit arrays like "using" parameters
-                $elm_options .= "$k=\"$v\" ";
-            }
-        } 
-
-        $content .= '<div class="col-sm-6 pl-0">' . PHP_EOL;
-
-        foreach ($opts as $op_value => $op_lable) {
-            $content .= '<div class="form-check form-check-inline">' . PHP_EOL;
-            $content .= '<label class="form-check-label">' . PHP_EOL;
-            $content .= '  <input type="checkbox" name="' . $element->getName() . '" value="' . $op_value . '" ';
-            $content .= $elm_options;
-            #if ($op_value == $value) {
-            if (in_array($op_value, $value)) {
-                $content .= ' checked="checked" ';
-                #$elm = $this->get('data1[]');
-                #$content .= ' ' . var_dump($element->getOptions()) . ' ';
-            }
-            $content .= '>';
-            #$content .= '<label class="form-check-label">' . PHP_EOL;
-            $content .= $op_lable; // . '<br />';
-            $content .= PHP_EOL . '</label>' . PHP_EOL;
-            $content .= '</div>';
-        }
-
-        $content .= PHP_EOL . '</div>' . PHP_EOL;
-        return $content;
-    }
-
-}
+} // end of class
 
 } // namespace (global)
 
@@ -531,10 +527,12 @@ namespace Application\Forms\Element {
 
 
 use Phalcon\Forms\Element\AbstractElement;
+use Phalcon\Forms\Element\ElementInterface;
 use Phalcon\Forms\Element\Select;
 
 class Button extends AbstractElement
 {
+    protected $class_for_button = "btn";
     /**
      * Renders the element widget returning html
      *
@@ -544,36 +542,112 @@ class Button extends AbstractElement
      */
     public function render($attributes = null):string
     {
-        $attrs = array();
+        $content = '';
 
-        if (!is_null($attributes)) {
-            foreach ($attributes as $attrName => $attrVal) {
-                if (is_numeric($attrName) || in_array($attrName, array('id', 'name', 'placeholder', 'type'))) {
-                    continue;
-                }
+        # Gather some infomation
+        $value = $this->getValue();
+        $label = $this->getLabel() ?? $value;
+        $name  = $this->getName();
+        $id    = $this->getAttribute('id', $name);
+        $type  = $this->getAttribute('type', 'submit');
+        $class = $this->getAttribute('class');
+        $class = trim("$this->class_for_button $class");
+        # Ignore any other attributes....
 
-                $attrs[] = $attrName .'="'. $attrVal .'"';
+        # Overwrite
+        $name  = 'action'; # -> fixed value!
+
+        $content .= '<button'
+                 .  ' type="'  . $type  . '"'
+                 .  ' name="'  . $name  . '"'
+                 .  ' value="' . $value .'"'
+                 .  ' id="'    . $id    . '"'
+                 .  ' class="' . $class . '"'
+                 .  '>'
+        ;
+        $content .= $label;
+        $content .= '</button>' . PHP_EOL;
+        return $content;
+
+    }
+}
+
+class buttonGroup extends AbstractElement
+{
+    protected $buttons = [];
+
+    public function __construct ($name, $attributes = []) {
+        parent::__construct($name, $attributes);
+
+        // Overwrite label strings to white space.
+        if (! $this->getLabel() ) {
+            $this->setLabel('&nbsp;');
+        }
+    }
+    /**
+     * Return button info with the specific name
+     */
+    public function get($name)
+    {
+        foreach($this->buttons as $button) {
+            $btnName = $button->getName() ?? 'NotSet';
+            return $button;
+        }
+        # Retrun null if not found
+        return null;
+    }
+    /**
+     * Add button info with the specific name
+     */
+    public function add($btnObj)
+    {
+        $this->buttons[] = $btnObj;
+
+        return $this;
+    }
+    /**
+     * Remove button info with the specific name
+     */
+    public function remove($name)
+    {
+        $i = 0;
+        foreach($this->buttons as $button) {
+            $bName = $button->getName();
+            if ($name == $bName) {
+                array_splice($this->buttons, $i, 1);
+                return $this;
             }
+            $i++;
+        }
+        // Do nothing...
+        return $this;
+    }
+
+    /**
+     * Renders the group of buttuns 
+     *
+     * @params array|null $attributes Element attributes
+     *
+     * @return string
+     */
+    public function render($attributes = null):string
+    {
+        $content = '';
+
+        $content .= '<div class="d-flex"'
+                 .  '>';
+        $content .= PHP_EOL;
+
+        foreach($this->buttons as $button) {
+            #$content .= '<div class="col">';
+            $content .= $button->render();
+            #$content .= '</div>';
         }
 
-        $attrs = ' '. implode(' ', $attrs);
+        $content .= '</div>';
+        $content .= PHP_EOL;
 
-        $id      = $this->getAttribute('id', $this->getName());
-        #$name    = $this->getName();
-        $name    = 'action'; // fixed value! 
-        $value   = $this->getValue();
-        $label   = $this->getLabel() ? $this->getLabel() : $this->getValue();
-
-        $type    = isset($attributes['type']) ? $attributes['type'] : 'submit';
-        if (strtolower($type) == 'reset') {
-            return <<<HTML
-<button type="reset" value="{$value}"{$attrs}>{$label}</button>
-HTML;
-        } else {
-            return <<<HTML
-<button type="submit" name="{$name}" value="{$value}"{$attrs}>{$label}</button>
-HTML;
-        }
+        return $content;
     }
 }
 
@@ -588,32 +662,34 @@ class Check extends AbstractElement
      */
     public function render($attributes = null):string
     {
-        $attrs = array();
+         $attrs = [];
 
-        if (!is_null($attributes)) {
-            foreach ($attributes as $attrName => $attrVal) {
-                if (is_numeric($attrName) || in_array($attrName, array('id', 'name', 'placeholder'))) {
-                    continue;
-                }
+         $name    = $this->getName();
+         $id      = $this->getAttribute('id', $name);
+         $class   = $this->getAttribute('class', '');
+         $class   = 'form-check-input' . $class;
+         
+         $output = '';
+         $output .= \Phalcon\Tag::hiddenField([
+             'name'  => $name,
+             'value' => '0',
+             'id'    => $id . '_0',
+         ]);
+         $output .= PHP_EOL;
+         $attr = [
+             'name'  => $name,
+             'value' => '1',
+             'id'    => $id . '_1',
+             'class' => $class,
+         ];
+         if ($this->getValue() | $this->getDefault()) {
+             $attr['checked'] = "checked";
+         }
 
-                $attrs[] = $attrName .'="'. $attrVal .'"';
-            }
-        }
+         $output .= \Phalcon\Tag::checkField($attr);
 
-        $attrs = ' '. implode(' ', $attrs);
+         return $output;
 
-        $name    = $this->getName();
-        $id      = $this->getAttribute('id', $name);
-
-        $checked = '';
-        if ($this->getValue()) {
-            $checked = ' checked="checked"';
-        }
-
-        return <<<HTML
-<input type="hidden" id="{$id}_" name="{$name}" value="0" />
-<input type="checkbox" id="{$id}" name="{$name}" value="1"{$attrs}{$checked} />
-HTML;
    }
 }
 
@@ -633,113 +709,242 @@ HTML;
 // Select box
 class baseSelect extends Select
 {
-    public function __construct ($name, $options = null, $attributes = null) {
-        parent::__construct($name, $options, $attributes);
+    public function __construct ($name, $attributes = []) {
+        parent::__construct($name, $attributes);
     }
 
-    public function getOptions()
+    public function addOption($option) :ElementInterface
     {
-        $opts = parent::getOptions();
-
-        $opts_class = get_class($opts[0]);
-        if ($opts_class == "Phalcon\Mvc\Model\Resultset\Simple") {
-            // if using tables
-            $opts_using  = $opts[1]['using'];
-            $opts_tmp    = [];
-            foreach($opts[0] as $r) {
-                $key = $r->{$opts_using[0]};
-                $val = $r->{$opts_using[1]};
-                $opts_tmp[$key] = $val;
+        $type = gettype($option);
+        if ($type == 'object'){
+            #echo get_class($option);
+            if (get_class($option) == 'Phalcon\Mvc\Model\Row'){
+                $using = $this->getAttribute('using');
+                $option = [
+                    $option->{$using[0]} => $option->{$using[1]},
+                ];
             }
-            $opts = $opts_tmp;
         }
+        parent::addOption($option);
+        return $this;
+    }
 
-        return $opts;
+    public function setOptions($options) :ElementInterface
+    {
+        $type = gettype($options);
+        if ($type == 'object'){
+            #echo get_class($options);
+            if (get_class($options) == 'Phalcon\Mvc\Model\Resultset\Simple'){
+                $using = $this->getAttribute('using');
+                $optionsArray = [];
+                foreach($options as $option) {
+                    $optionsArray[ $option->{$using[0]} ] = $option->{$using[1]};
+                }
+                $options = $optionsArray;
+            }
+        }
+        parent::setOptions($options);
+        return $this;
     }
 
     public function render($attributes = null):string
     {
-        parent::render($attributes = null);
+        return parent::render($attributes);
     }
 }
 
 // Radio Button based on select box
 class Radio extends baseSelect
 {
+    protected $indent          = '  ';
+    # Classes for bootstrap5
+    protected $class_for_radio       = 'form-check-input';
+    protected $class_for_radio_label = 'form-check-label';
+    protected $class_for_wrap        = 'form-check form-check-inline';
+
     public function render($attributes = null):string
     {
-        // Render select box element as "Radio Button"
-        $opts  = $this->getOptions();
-        $value = $this->getValue();
-        #
         $content = '';
 
-        $elm_options = '';
-        foreach($attributes as $k => $v) {
-            $elm_options .= "$k=\"$v\" ";
+        # Gather some infomation
+        $opts  = $this->getOptions();
+        $value = $this->getValue();
+        $name  = $this->getName();
+        $class = $this->getAttribute('class');
+        $class = trim("$class $this->class_for_radio");
+        # Ignore any other attributes....
+
+        foreach ($opts as $op_value => $op_label) {
+
+            $output  = '<div class="' . $this->class_for_wrap . '">' . PHP_EOL;
+            $output .= $this->indent;
+
+            $id = $name . '_' . $op_value;
+            $params = [
+                'name'  => $name,
+                'id'    => $id,
+                'value' => $op_value,
+                'class' => $class,
+            ];
+
+            $checked = '';
+            if ($value == $op_value ){
+                $params['checked'] = 'checked';
+            };
+
+            $output .= \Phalcon\Tag::radioField($params);
+
+            $output   .= PHP_EOL;
+            $output   .= $this->indent
+                      . '<label class="' . $this->class_for_radio_label . '"'
+                      . ' for="' . $id .'"'
+                      . '>';
+            $output   .= $op_label;
+            $output   .= '</label>'
+                      . PHP_EOL;
+            $output   .= '</div>' . PHP_EOL;
+
+            $content  .= $output;
         }
-
-        $content .= '<div class="d-flex align-items-center justify-content-center">' . PHP_EOL;
-
-        foreach ($opts as $op_value => $op_lable) {
-            $content .= '<div class="form-check">' .PHP_EOL;
-            $content .= '  <input type="radio" name="' . $this->getName() . '" value="' . $op_value . '"';
-            if ($op_value == $value) {
-                $content .= ' checked="checked" ';
-            }
-            $content .= $elm_options;
-            $content .= '>' . PHP_EOL;
-            $content .= '  <label>' . $op_lable . '</label>' . PHP_EOL;
-            $content .= '</div>' . PHP_EOL;
-
-
-            #$content .= '<label>';
-            #$content .= '<input type="radio" name="' . $this->getName() . '" value="' . $op_value . '"';
-            #if ($op_value == $value) {
-            #    $content .= ' checked="checked" ';
-            #}
-            #$content .= $elm_options;
-            #$content .= '>' . $op_lable;
-            #$content .= '</label>' . PHP_EOL;
-        }
-
-        $content .= '</div>' . PHP_EOL;
 
         return $content;
     }
 }
 
 // Multi Checkboxes based on select box
-class MultiCheck extends baseSelect
+class multiSelect extends baseSelect
 {
-    public function __construct ($name, $options = null, $attributes = null) {
-        $attributes['multiple'] = true;
-        parent::__construct($name, $options, $attributes);
+    protected $indent             = '  ';
+    protected $size_default       = 4;
+    # Classes for bootstrap5
+    protected $class_for_select   = 'form-select';
+
+    public function render($attributes = null):string
+    {
+        // Render multiple select box element
+        $content = '';
+
+        # Gather some infomation
+        $opts  = $this->getOptions();
+        $value = $this->getValue();
+        $name  = $this->getName() . '[]'; # [] means this element is "multiple select"
+        $id    = $this->getAttribute('id') ?? $name;
+        $size  = $this->getAttribute('size',$this->size_default);
+        $class = $this->getAttribute('class');
+        $class = trim("$class $this->class_for_select");
+        # Ignore any other attributes....
+
+        if (gettype($value) == 'array') {
+            $valueArray = $value;
+        } else {
+            $valueArray = explode(',', $value);
+        }
+
+        // Dummy input for no options are selected
+        $content .= \Phalcon\Tag::hiddenField([
+            $this->getName(), // Need to omit '[]'
+            'value' => ''
+        ]);
+        $content .= PHP_EOL;
+
+        $content .= '<select'
+                 . ' id="' . $id . '"'
+                 . ' name="' . $name . '"'
+                 . ' class="' . $class . '"'
+                 . ' size="' . $size . '"'
+                 . ' multiple="multiple"'
+                 . ' />'
+                 . PHP_EOL;
+
+        foreach ($opts as $op_value => $op_label) {
+            $content .= $this->indent
+                     . '<option ' 
+                     . ' value="' . $op_value . '"'
+            ;
+            if (in_array($op_value, $valueArray) ){
+                $content .= ' selected="selected"';
+            };
+            $content .= ' />';
+            $content .= $op_label;
+            $content .= '</option>'
+                     . PHP_EOL;
+        }
+
+        $content .= '</select>';
+
+        return $content;
+
     }
+}
+
+// Multi Checkboxes based on select box
+class multiCheck extends baseSelect
+{
+    protected $indent             = '  ';
+    # Classes for bootstrap5
+    protected $class_for_check    = 'form-check-input';
+    protected $class_for_label    = 'form-check-label';
+    protected $class_for_wrap     = 'form-check form-check-inline';
 
     public function render($attributes = null):string
     {
         // Render multiple select box element as multiple "Checkbox"
+        $content = '';
+
+        # Gather some infomation
         $opts  = $this->getOptions();
-
         $value = $this->getValue();
-        $name = $this->getName() . '[]'; # this means this is "multiple select"
+        $name  = $this->getName() . '[]'; # [] means this element is "multiple select"
+        $id    = $this->getAttribute('id') ?? $name;
+        $class = $this->getAttribute('class');
+        $class = trim("$class $this->class_for_check");
+        # Ignore any other attributes....
 
-        #$content .= '<div>' . PHP_EOL;
-        $content .= '<div class="d-flex align-items-center justify-content-center">' . PHP_EOL;
-
-        foreach ($opts as $op_value => $op_lable) {
-            $content .= '<div class="form-check form-check-inline">' . PHP_EOL;
-            $content .= '  <input class="form-check-input" type="checkbox" name="' . $name . '" value="' . $op_value . '" ';
-            if (in_array($op_value, $value)) {
-                $content .= ' checked="checked" ';
-            }
-            $content .= '>' . PHP_EOL;;
-            $content .= '  <label class="form-check-label">' . $op_lable . '</label>' . PHP_EOL;
-            $content .= '</div>' . PHP_EOL;;
+        if (gettype($value) == 'array') {
+            $valueArray = $value;
+        } else {
+            $valueArray = explode(',', $value);
         }
 
-        $content .= PHP_EOL . '</div>' . PHP_EOL;
+        // Dummy input for no options are selected
+        $content .= \Phalcon\Tag::hiddenField([
+            $this->getName(), // Need to omit '[]'
+            'value' => ''
+        ]);
+        $content .= PHP_EOL;
+
+
+        foreach ($opts as $op_value => $op_lable) {
+
+            $content .= '<div'
+                     . ' class="' . $this->class_for_wrap . '"'
+                     . ' />'
+                     . PHP_EOL;
+
+            $content .= $this->indent
+                     . '<input'
+                     . ' type="checkbox"'
+                     . ' class="' . $this->class_for_check . '"'
+                     . ' name="' . $name . '"'
+                     . ' value="' . $op_value . '" '
+                     ;
+            if (in_array($op_value, $valueArray)) {
+                $content .= ' checked="checked" ';
+            }
+            $content .= '>' . PHP_EOL;
+
+            $content .= $this->indent
+                     . '<label'
+                     . ' class="' . $this->class_for_label
+                     . '">'
+                     ;
+            $content .= $op_lable;
+            $content .= '</label>'
+                     . PHP_EOL;
+            $content .= '</div>'
+                     . PHP_EOL;
+
+        }
 
         return $content;
     }
