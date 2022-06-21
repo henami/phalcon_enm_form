@@ -2,4 +2,4 @@
 
 This is my private repogitory for Phalcon PHP Library.
 
-Do not USE this, it's under construction.
+It's under construction. But you can use it for Phalcon v4 only.
