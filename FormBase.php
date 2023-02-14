@@ -48,6 +48,10 @@ Form base class for Phalcon Web Framework
 - add Application\Forms\Element\multiSelect Element
 - add Application\Forms\Element\buttonGroup Element
 
+2.3 2022.08.08 H.Enami
+
+- modify for phalcon5
+
 */
 
 
@@ -55,10 +59,12 @@ namespace { // global
 
 use Phalcon\Forms\Form;
 use Phalcon\Filter\FilterFactory;
+use Phalcon\Html\Helper\Label;
+use Phalcon\Html\Escaper;
 
 class FormBase extends Form
 {
-    protected $_version  = "2.2";
+    protected $_version  = "2.3";
     protected $separator = PHP_EOL;
     protected $indent    = "    "; // space x 4
 
@@ -103,7 +109,7 @@ class FormBase extends Form
         // Rebuild Action if not specified
         $action = $this->getAction();
         if (! $action ){
-            $action = $this->router->getControllerName()  . '/' . $this->router->getActionName();
+            $action = $this->url->get('/') . $this->router->getControllerName()  . '/' . $this->router->getActionName();
             foreach($this->router->getParams() as $param ){
                 $action = $action . '/' . $param;
             }
@@ -139,7 +145,7 @@ class FormBase extends Form
         }
         $output .= $content_all . $separator;
         // </form> : close tag
-        $output .= $this->tag->endForm() . $separator;
+        $output .= $this->tag->close('form') . $separator;
 
         return $output;
     }
@@ -233,7 +239,7 @@ class FormBase extends Form
 
     private function _buildLabel($element, $options = array(), $content = '')
     {
-        $output_attr = isset($options['attributes']) ? $options['attributes'] : array();
+        $output_attr = isset($options['attributes']) ? $options['attributes'] : [];
         switch ( get_class($element)) {
             case 'Phalcon\Forms\Element\Check' :
             case 'Phalcon\Forms\Element\Radio' :
@@ -253,7 +259,11 @@ class FormBase extends Form
                 )
             );
         }
-        $output    = $element->label($output_attr);
+        #$output    = $element->label($output_attr);
+        $escaper   = new Escaper();
+        $label     = new Label($escaper); #this->_buildRequired($element->getLabel()));
+        $raw       = TRUE;
+        $output    = $label($element->getLabel(),$output_attr,$raw);
         $placement = array_key_exists('placement', $options) ? $options['placement'] : 'APPEND';
         return $this->_concatenate($output, $content, $placement);
     }
@@ -297,17 +307,6 @@ class FormBase extends Form
             $attr['class'] = $this->getDefaultElementClass();
         }
 
-        // Get minimal filtered value
-        $theValue = $element->getValue();
-        $factory  = new FilterFactory();
-        $locator  = $factory->newInstance();
-        $filtered = '';
-        if (gettype($theValue) == 'array') {
-            $filtered = implode(',', $theValue);
-        } else {
-            $filtered =  $locator->sanitize($theValue, "string");
-        }
-
         // Get class name of the element
         $elementClass = get_class($element);
 
@@ -323,32 +322,44 @@ class FormBase extends Form
             return $element->render($attr);
         };
 
+        // Get minimal filtered value
+        $theValue = $element->getValue();
+        $factory  = new FilterFactory();
+        $locator  = $factory->newInstance();
+        $filtered = '';
+        if (gettype($theValue) == 'array') {
+            $filtered = implode(',', $theValue);
+        } else {
+            $filtered =  $locator->sanitize($theValue, "string");
+        }
+
         if ($elementClass == 'Phalcon\Forms\Element\TextArea'){
             // Render LF/CR as <br/>
             $output  = '<span>' . nl2br($filtered) . '</span>';
-            $output .= $this->tag->hiddenField([
+            $output .= $this->tag->inputHidden(
                 $element->getName(),
-                'value' => $filtered,
-            ]);
+                $filtered,
+            );
             return $output;
         }
  
         if ($elementClass == 'Application\Forms\Element\Check'){
             $str = $filtered ? '1 (ON)' : '0 (OFF)';
-            $output  = '<span>' . $str  . '</span>';
-            $output .= $this->tag->hiddenField([
+            #$output  = '<span>' . $str  . '</span>';
+            $output  = $str;
+            $output .= $this->tag->inputHidden(
                 $element->getName(),
-                'value' => $filtered,
-            ]);
+                $filtered,
+            );
             return $output;
         }
  
         if ($elementClass == 'Phalcon\Forms\Element\Password'){
             $output  = '<span class="form-control-plaintext">' . '********' . '</span>';
-            $output .= $this->tag->hiddenField([
+            $output .= $this->tag->inputHidden(
                 $element->getName(),
-                'value' => $filtered,
-            ]);
+                $filtered,
+            );
             return $output;
         }
 
@@ -376,19 +387,19 @@ class FormBase extends Form
             } else {
                 $hiddenName = $element->getName();
             }
-            $output .= $this->tag->hiddenField([
+            $output .= $this->tag->inputHidden(
                 $hiddenName,
-                'value' => $filtered,
-            ]);
+                $filtered,
+            );
             return $output;
         }
 
         // Rendering Text element and any other elements not listed above.
         $output  = '<span>' . $filtered . '</span>';
-        $output .= $this->tag->hiddenField([
+        $output .= $this->tag->inputHidden(
             $element->getName(),
-            'value' => $filtered,
-        ]);
+            $filtered,
+        );
 
         return $output;
     }
@@ -428,7 +439,7 @@ class FormBase extends Form
             $messages = $element->getMessages();
         }
         if (count($messages)) {
-            $content .= '<span class="alert-danger rounded pt-2 col-sm-3">';
+            $content .= '<span class="alert alert-danger rounded py-1 m-0 col-sm-3">';
             foreach ($messages as $message) {
                 $content .=  $message;
             }
@@ -445,14 +456,14 @@ class FormBase extends Form
 
         $this->_default_decorator = $this->_default_decorator ? $this->_default_decorator : [
             'ViewHelper',
-            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-7'))),
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-6'))),
             'Errors',
             array('Label',  array('placement' => 'PREPEND', 'attributes' => array('class'=>$default_label_class))),
             array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'row mb-3'))),
         ];
         $this->_default_confirm_decorator = $this->_default_confirm_decorator ? $this->_default_confirm_decorator :[
             'ViewHelper',
-            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-7'))),
+            array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'col-sm-6'))),
             'Errors',
             array('Label',  array('placement' => 'PREPEND', 'attributes' => array('class'=>$default_label_class))),
             array('HtmlTag',array('tag' => 'div', 'attributes' => array('class' => 'row mb-3'))),
