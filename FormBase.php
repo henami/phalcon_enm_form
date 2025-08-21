@@ -678,7 +678,7 @@ class Check extends AbstractElement
          $name    = $this->getName();
          $id      = $this->getAttribute('id', $name);
          $class   = $this->getAttribute('class', '');
-         $class   = 'form-check-input' . $class;
+         $class   = 'form-check-input ' . $class;
          
          $output = '';
          $output .= \Phalcon\Tag::hiddenField([
